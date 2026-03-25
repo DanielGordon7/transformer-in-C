@@ -4,6 +4,7 @@ build/
 
 # Downloaded datasets
 mnist_data/
+shakespeare.txt
 
 # Saved model binaries
 *.bin
