@@ -1,0 +1,9 @@
+# Build artifacts
+build/
+*.so
+
+# Downloaded datasets
+mnist_data/
+
+# Saved model binaries
+*.bin
