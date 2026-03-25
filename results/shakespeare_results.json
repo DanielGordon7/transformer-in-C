@@ -1,0 +1,33 @@
+{
+  "lnn": {
+    "test_bpc": 5.950823612458325,
+    "train_time": 48.99314785003662,
+    "n_params": 97854,
+    "mem_kb": 382.2421875,
+    "bpc_curve": [
+      5.9535978162051295,
+      5.952417754752539,
+      5.951237085715793
+    ],
+    "sample": "JULIET:\nMwjb;;&rbh ypCAAHVPHb:HLRmBUa!b?'wxoH-gQ.T!uFfIVWAymwtbv,B!JNFpLGW:n'zlB\nohjl'L.rcJ&IJjdtS.ilYlTVP - dIUuEOkD'G;vodsnAtWotI-DPor\nUOC.JwJVhLyxETHG!bU&GuD:TzEflDjLddW,pIA!ag UDe?gMw:K.vsEeoYVD,ttdKKjtsm"
+  },
+  "tf": {
+    "test_bpc": 5.150985805988312,
+    "train_time": 7.297135353088379,
+    "n_params": 107392,
+    "mem_kb": 419.5,
+    "bpc_curve": [
+      5.640471707344055,
+      5.1566914768219,
+      4.9956039028167725
+    ],
+    "sample": "JULIET:\ni Lte\n m\n hilEoWdnfohe dN-uetloeie i \nh uutS\nuiyypadra ftnh iy esnnndTorssehonnosac h ei i\n ra fo!i  fennyeao'd \nurne  RhnnWuohlcFan\n   rne ef edhi diesl  l\nhulaneiudut&  \n n as\nrI nmsnpB noyccrauseno"
+  },
+  "meta": {
+    "epochs": 3,
+    "n_train": 1000,
+    "seq_len": 64,
+    "vocab_size": 62,
+    "lr": 0.0003
+  }
+}

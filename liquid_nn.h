@@ -39,6 +39,23 @@ void lnn_forward(LiquidNN *lnn, const float *input, float *output);
 float lnn_train_step(LiquidNN *lnn, const float *input, const float *target,
                      float lr);
 
+/*
+ * Sequence inference: run T inputs through the model and write
+ * the output computed from the final hidden state into `output`.
+ * inputs : [T * input_size]  (row-major, one row per timestep)
+ */
+void lnn_forward_sequence(LiquidNN *lnn, const float *inputs, int T,
+                          float *output);
+
+/*
+ * Sequence training: full BPTT through T * ode_steps integration steps.
+ * inputs : [T * input_size]  (row-major)
+ * target : [output_size]
+ * Returns MSE loss.
+ */
+float lnn_train_sequence(LiquidNN *lnn, const float *inputs, int T,
+                         const float *target, float lr);
+
 /* Persistence */
 int       lnn_save(const LiquidNN *lnn, const char *filename);
 LiquidNN *lnn_load(const char *filename);

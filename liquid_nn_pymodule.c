@@ -142,6 +142,52 @@ static PyObject *LiquidNN_train_step(LiquidNNObject *self, PyObject *args,
     return PyFloat_FromDouble((double)loss);
 }
 
+/* forward_sequence(inputs_2d, T) -> list[float]
+ * inputs_2d: flat list of length T*input_size (row-major) */
+static PyObject *LiquidNN_forward_sequence(LiquidNNObject *self, PyObject *args) {
+    PyObject *input_seq;
+    int T;
+    if (!PyArg_ParseTuple(args, "Oi", &input_seq, &T)) return NULL;
+    if (!self->net) { PyErr_SetString(PyExc_RuntimeError, "not initialised"); return NULL; }
+
+    int expected = T * self->net->input_size;
+    float *inputs = seq_to_floats(input_seq, expected);
+    if (!inputs) return NULL;
+
+    float *output = (float *)malloc((size_t)self->net->output_size * sizeof(float));
+    if (!output) { free(inputs); PyErr_NoMemory(); return NULL; }
+
+    lnn_forward_sequence(self->net, inputs, T, output);
+
+    PyObject *result = floats_to_list(output, self->net->output_size);
+    free(inputs); free(output);
+    return result;
+}
+
+/* train_sequence(inputs_flat, T, target, lr=0.001) -> float loss */
+static PyObject *LiquidNN_train_sequence(LiquidNNObject *self, PyObject *args,
+                                         PyObject *kwds) {
+    PyObject *input_seq, *target_seq;
+    int T;
+    float lr = 0.001f;
+    static char *kwlist[] = {"inputs", "T", "target", "lr", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OiO|f", kwlist,
+                                     &input_seq, &T, &target_seq, &lr))
+        return NULL;
+    if (!self->net) { PyErr_SetString(PyExc_RuntimeError, "not initialised"); return NULL; }
+
+    int expected = T * self->net->input_size;
+    float *inputs = seq_to_floats(input_seq, expected);
+    if (!inputs) return NULL;
+    float *target = seq_to_floats(target_seq, self->net->output_size);
+    if (!target) { free(inputs); return NULL; }
+
+    float loss = lnn_train_sequence(self->net, inputs, T, target, lr);
+
+    free(inputs); free(target);
+    return PyFloat_FromDouble((double)loss);
+}
+
 static PyObject *LiquidNN_reset_state(LiquidNNObject *self, PyObject *args) {
     if (!self->net) { PyErr_SetString(PyExc_RuntimeError, "not initialised"); return NULL; }
     lnn_reset_state(self->net);
@@ -199,10 +245,16 @@ static PyGetSetDef LiquidNN_getset[] = {
 };
 
 static PyMethodDef LiquidNN_methods[] = {
-    {"forward",     (PyCFunction)LiquidNN_forward,     METH_VARARGS,
+    {"forward",          (PyCFunction)LiquidNN_forward,          METH_VARARGS,
      "forward(input) -> list[float]\nRun forward pass."},
-    {"train_step",  (PyCFunction)LiquidNN_train_step,  METH_VARARGS | METH_KEYWORDS,
+    {"forward_sequence", (PyCFunction)LiquidNN_forward_sequence, METH_VARARGS,
+     "forward_sequence(inputs_flat, T) -> list[float]\n"
+     "Run T-step sequence inference (inputs_flat has length T*input_size)."},
+    {"train_step",       (PyCFunction)LiquidNN_train_step,       METH_VARARGS | METH_KEYWORDS,
      "train_step(input, target, lr=0.001) -> float\nOne BPTT step, returns MSE loss."},
+    {"train_sequence",   (PyCFunction)LiquidNN_train_sequence,   METH_VARARGS | METH_KEYWORDS,
+     "train_sequence(inputs_flat, T, target, lr=0.001) -> float\n"
+     "Full BPTT through a T-step sequence, returns MSE loss."},
     {"reset_state", (PyCFunction)LiquidNN_reset_state, METH_NOARGS,
      "reset_state()\nZero the hidden state."},
     {"save",        (PyCFunction)LiquidNN_save,        METH_VARARGS,

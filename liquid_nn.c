@@ -278,6 +278,143 @@ float lnn_train_step(LiquidNN *lnn, const float *input, const float *target,
     return loss;
 }
 
+/* ── sequence inference ──────────────────────────────────────── */
+
+void lnn_forward_sequence(LiquidNN *lnn, const float *inputs, int T,
+                          float *output) {
+    int I = lnn->input_size;
+    for (int t = 0; t < T; t++)
+        lnn_forward(lnn, inputs + t * I, output);
+    /* output already written by the last lnn_forward call */
+}
+
+/* ── sequence training (full BPTT) ───────────────────────────── */
+/*
+ * All T inputs share the same weight matrices.
+ * The integration steps are indexed globally: step = t*S + s
+ * where t ∈ [0,T) is the input timestep and s ∈ [0,S) is the ODE
+ * sub-step within that timestep.
+ */
+float lnn_train_sequence(LiquidNN *lnn, const float *inputs, int T,
+                         const float *target, float lr) {
+    int R  = lnn->reservoir_size;
+    int I  = lnn->input_size;
+    int O  = lnn->output_size;
+    int S  = lnn->ode_steps;
+    float dt = lnn->dt;
+    int total = T * S;
+
+    float *states = (float *)malloc((size_t)(total + 1) * R * sizeof(float));
+    float *acts   = (float *)malloc((size_t) total      * R * sizeof(float));
+
+    memcpy(states, lnn->state, (size_t)R * sizeof(float));
+
+    /* ---- forward ---- */
+    for (int t = 0; t < T; t++) {
+        const float *u = inputs + t * I;
+        for (int s = 0; s < S; s++) {
+            int step    = t * S + s;
+            float *xp   = states + step       * R;
+            float *xn   = states + (step + 1) * R;
+            float *f    = acts   + step        * R;
+            for (int r = 0; r < R; r++) {
+                float net = lnn->b_rec[r];
+                for (int i = 0; i < I; i++)
+                    net += lnn->W_in[r * I + i] * u[i];
+                for (int j = 0; j < R; j++)
+                    net += lnn->W_rec[r * R + j] * xp[j];
+                f[r] = tanhf(net);
+                float alpha = dt / lnn->tau[r];
+                xn[r] = xp[r] * (1.0f - alpha) + alpha * f[r];
+            }
+        }
+    }
+    memcpy(lnn->state, states + total * R, (size_t)R * sizeof(float));
+    float *x_final = lnn->state;
+
+    /* ---- output & loss ---- */
+    float *output = (float *)malloc((size_t)O * sizeof(float));
+    for (int o = 0; o < O; o++) {
+        float v = lnn->b_out[o];
+        for (int r = 0; r < R; r++)
+            v += lnn->W_out[o * R + r] * x_final[r];
+        output[o] = v;
+    }
+    float loss = 0.0f;
+    float *dl_dy = (float *)malloc((size_t)O * sizeof(float));
+    for (int o = 0; o < O; o++) {
+        float d = output[o] - target[o];
+        loss += d * d;
+        dl_dy[o] = 2.0f * d / (float)O;
+    }
+    loss /= (float)O;
+
+    /* ---- gradient buffers ---- */
+    float *dW_out     = (float *)calloc((size_t)O * R, sizeof(float));
+    float *db_out     = (float *)calloc((size_t)O,     sizeof(float));
+    float *dW_in      = (float *)calloc((size_t)R * I, sizeof(float));
+    float *dW_rec     = (float *)calloc((size_t)R * R, sizeof(float));
+    float *db_rec     = (float *)calloc((size_t)R,     sizeof(float));
+    float *dl_dx      = (float *)calloc((size_t)R,     sizeof(float));
+    float *dl_dx_prev = (float *)calloc((size_t)R,     sizeof(float));
+    float *e          = (float *)malloc ((size_t)R *    sizeof(float));
+
+    for (int o = 0; o < O; o++) {
+        for (int r = 0; r < R; r++) {
+            dW_out[o * R + r]  = dl_dy[o] * x_final[r];
+            dl_dx[r]          += lnn->W_out[o * R + r] * dl_dy[o];
+        }
+        db_out[o] = dl_dy[o];
+    }
+
+    /* ---- BPTT ---- */
+    for (int step = total - 1; step >= 0; step--) {
+        int t         = step / S;
+        const float *u = inputs + t * I;
+        float *xp     = states + step * R;
+        float *f      = acts   + step * R;
+
+        for (int r = 0; r < R; r++) {
+            float alpha = dt / lnn->tau[r];
+            e[r] = alpha * (1.0f - f[r] * f[r]) * dl_dx[r];
+        }
+        for (int r = 0; r < R; r++) {
+            for (int i = 0; i < I; i++)
+                dW_in[r * I + i] += e[r] * u[i];
+            for (int j = 0; j < R; j++)
+                dW_rec[r * R + j] += e[r] * xp[j];
+            db_rec[r] += e[r];
+        }
+        for (int j = 0; j < R; j++) {
+            float alpha_j = dt / lnn->tau[j];
+            float v = (1.0f - alpha_j) * dl_dx[j];
+            for (int r = 0; r < R; r++)
+                v += e[r] * lnn->W_rec[r * R + j];
+            dl_dx_prev[j] = v;
+        }
+        memcpy(dl_dx, dl_dx_prev, (size_t)R * sizeof(float));
+    }
+
+    clip_grad(dW_out, O * R, 5.0f);
+    clip_grad(db_out, O,     5.0f);
+    clip_grad(dW_in,  R * I, 5.0f);
+    clip_grad(dW_rec, R * R, 5.0f);
+    clip_grad(db_rec, R,     5.0f);
+
+    for (int i = 0; i < O * R; i++) lnn->W_out[i] -= lr * dW_out[i];
+    for (int i = 0; i < O;     i++) lnn->b_out[i] -= lr * db_out[i];
+    for (int i = 0; i < R * I; i++) lnn->W_in[i]  -= lr * dW_in[i];
+    for (int i = 0; i < R * R; i++) lnn->W_rec[i]  -= lr * dW_rec[i];
+    for (int i = 0; i < R;     i++) lnn->b_rec[i]  -= lr * db_rec[i];
+
+    free(states); free(acts);
+    free(output); free(dl_dy);
+    free(dW_out); free(db_out);
+    free(dW_in);  free(dW_rec); free(db_rec);
+    free(dl_dx);  free(dl_dx_prev); free(e);
+    return loss;
+}
+
 /* ── persistence ─────────────────────────────────────────────── */
 
 #define LNN_MAGIC   0x4C4E4E31u   /* "LNN1" */
